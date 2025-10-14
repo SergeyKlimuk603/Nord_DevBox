@@ -38,6 +38,12 @@ public with sharing class TriggerFactory {
                     return new BusinessObjectWorkspaceTriggerHandler();
                 }
             }
+
+            if (soType == Case.sObjectType) {
+                if (!BypassTrigger(Case.sObjectType)) {
+                    return new CaseTriggerHandler();
+                }
+            }
         } else {
             system.debug('#### Bypass All Triggers for: ' + runningUser.Name);
         }
