@@ -1,9 +1,11 @@
 public class CaseTriggerHandler  extends TriggerHandler {
     private static final Map<Id, Account> accountsMap = new Map<Id, Account>();
+    private static final String CASE_OBJECT_NAME = 'Case';
+    private static final String CASE_COMPLAINT_RECORD_TYPE = 'Complaint';
+    private static final String CASE_STATUS_CLOSED = 'Closed';
 
     public override void beforeInsert(List<SObject> newCases){
         mainProcessBefore(null, newCases);
-
     }
 
     public override void afterInsert(List<SObject> newCases){
@@ -16,10 +18,8 @@ public class CaseTriggerHandler  extends TriggerHandler {
     }
     public override void afterUpdate(List<SObject> oldCases, List<SObject> newCases){
         mainProcessAfter(new Map<Id, Case>((List<Case>) oldCases), newCases);
-        
     }
 
-    //TODO rename method
     private void mainProcessBefore(Map<Id, Case> oldCasesMap, List<Case> newCases) {
         Map<Id, Account> accountsById = getParentAccountsById(newCases);
 
@@ -37,7 +37,6 @@ public class CaseTriggerHandler  extends TriggerHandler {
         }
     }
 
-    //TODO rename method
     private void mainProcessAfter(Map<Id, Case> oldCasesMap, List<Case> newCases) {
         if (newCases == null || newCases.isEmpty()) return;
 
@@ -46,21 +45,29 @@ public class CaseTriggerHandler  extends TriggerHandler {
         Map<Id, RecordType> caseRecordTypeById = new Map<Id, RecordType>([
             SELECT Id, SobjectType, DeveloperName
             FROM RecordType
-            WHERE SobjectType = 'Case'
+            WHERE SobjectType = :CASE_OBJECT_NAME
         ]);
 
+        List<Task> tasksToInsert = new List<Task>();
+
         for (Case newCase : newCases) {
-            //TODO Do nothing here
+            //TODO Do nothing here in updateIfNothingForComplaintsHere()
             updateIfNothingForComplaintsHere(newCase, caseRecordTypeById.get(newCase.RecordTypeId));
-            createTaskWhenDueDateIsSet(newCase, oldCasesMap?.get(newCase.Id), accountsById.get(newCase.AccountId));
+            
+            Task task = createTaskWhenDueDateIsSet(newCase, oldCasesMap?.get(newCase.Id), accountsById.get(newCase.AccountId));
+            if (task != null) {
+                tasksToInsert.add(task);
+            }   
         }
+
+        insert tasksToInsert;
     }
 
     //TODO Do nothing here
     private Case updateIfNothingForComplaintsHere(Case newCase, RecordType caseRecordType) {
         if (newCase == null) return null;
 
-        if (caseRecordType?.Description == 'Complaint') {
+        if (caseRecordType?.DeveloperName == CASE_COMPLAINT_RECORD_TYPE) {
             newCase.CurrencyIsoCode = newCase.CurrencyIsoCode;
         }
 
@@ -84,7 +91,7 @@ public class CaseTriggerHandler  extends TriggerHandler {
         if (newCase == null || oldCase == null) return null;
 
          if (newCase.Status != oldCase.Status
-            && newCase.Status == 'Closed'
+            && newCase.Status == CASE_STATUS_CLOSED
             && newCase.ClosedDate_First__c == null
         ) {
             newCase.ClosedDate_First__c = Datetime.now();
@@ -187,8 +194,6 @@ public class CaseTriggerHandler  extends TriggerHandler {
         newTask.Subject = newTaskSubject;
         newTask.WhatId = newCase.Id;
 
-        insert newTask;
-
         return newTask;
     }
 
@@ -201,7 +206,8 @@ public class CaseTriggerHandler  extends TriggerHandler {
 
         return new Map<Id, Account>([
             //TODO maybe we need only one parent level, the most deep
-            SELECT Id, ParentId, Parent.ParentId, Parent.Parent.ParentId, BuyerGroup__c
+            SELECT Id, Name, BuyerGroup__c, CHLevel__c, Division_Division__c, GeneralDataAccount__c, 
+                GeneralDataAccountGroup__c, ParentId, Parent.ParentId, Parent.Parent.ParentId
             FROM Account
             WHERE Id IN :parentAccountIds
         ]);
@@ -223,6 +229,4 @@ public class CaseTriggerHandler  extends TriggerHandler {
 
         return ids;
     }
-
-
 }
