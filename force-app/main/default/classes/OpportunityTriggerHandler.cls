@@ -14,7 +14,12 @@ public class OpportunityTriggerHandler extends TriggerHandler {
     Id StrategicOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'Strategic');
     Id SalesOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'RenewalBusiness');
     Id RetailOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'Retail_Pricing');
+    Id WorldMarketPricingOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'World_Market_Pricing');
     Id ProspectAccountRtId = Utility.getRecordTypeIdByDeveloperName('Account', SAP_Utility.Account_ProspectRT);
+
+    private static final String FREIGHT_VISIBILITY_HIDDEN = 'ZFHD';
+    private static final String SERVICE_FEE_VISIBILITY_HIDDEN = 'ZLSH';
+
     public override void beforeInsert(List<SObject> newObjects) {
         set<id> accountIds = new set<id>();
 
@@ -61,6 +66,8 @@ public class OpportunityTriggerHandler extends TriggerHandler {
                 opp.ExchangeRate__c = PricingUtils.GetConversionRate(opp.CurrencyIsoCode).ConversionRate;
             }
         }
+
+        mainProcessBeforeInsert(newObjects);
 
     }
 
@@ -369,6 +376,52 @@ public class OpportunityTriggerHandler extends TriggerHandler {
     }
     public String getlbl_Quote_Closing_Sentence2(Opportunity opportunityRecord) {
         return ContractLabelTranslations.GetLabel('lbl_Quote_Closing_Sentence2', opportunityRecord.TemplateLanguage__c);
+    }
+
+    private static void mainProcessBeforeInsert(List<Opportunity> opportunities) {
+        if (opportunities == null || opportunities.isEmpty() || oldOpportunitiesMap == null || oldOpportunitiesMap.isEmpty()) return;
+
+        for (Opportunity opportunity : opportunities) {
+            setDefaultVisibility(opportunities);
+            setContractToNew(opportunities);
+        }
+    }
+
+    private static void mainProcessAfterInsert(List<Opportunity> opportunities, Map<Id, Opportunity> oldOpportunitiesMap) {
+        if (opportunities == null || opportunities.isEmpty()) return;
+
+    }
+
+    private static void mainProcessBeforeUpdate(List<Opportunity> opportunities) {
+        if (opportunities == null || opportunities.isEmpty()) return;
+
+    }
+
+    private static void mainProcessAfterUpdate(List<Opportunity> opportunities, Map<Id, Opportunity> oldOpportunitiesMap) {
+        if (opportunities == null || opportunities.isEmpty() || oldOpportunitiesMap == null || oldOpportunitiesMap.isEmpty()) return;
+
+    }
+
+    private static Opportunity setDefaultVisibility(Opportunity opportunity) {
+        if (opportunity == null) return null;
+
+        if (opportunity.RecordTypeId == WorldMarketPricingOpportunityRtId) {
+            opportunity.FreightVisibility__c = FREIGHT_VISIBILITY_HIDDEN;
+            opportunity.ServiceFeeVisibility__c = SERVICE_FEE_VISIBILITY_HIDDEN;
+        }
+
+        return opportunity;
+    }
+
+    private static Opportunity setContractToNew(Opportunity opportunity) {
+        if (opportunity == null) return null;
+
+        if (opportunity.RecordTypeId == SalesOpportunityRtId) {
+            opportunity.ContractStatus__c = 'New Contract';
+            opportunity.ContractTemplateJSON__c = '""';
+        }
+
+        return opportunity;
     }
 
     public class RecalculateXrate {
