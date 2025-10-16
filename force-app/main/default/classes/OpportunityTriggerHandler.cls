@@ -12,13 +12,19 @@
 public class OpportunityTriggerHandler extends TriggerHandler {
 
     Id StrategicOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'Strategic');
-    Id SalesOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'RenewalBusiness');
+    static Id SalesOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'RenewalBusiness');
     Id RetailOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'Retail_Pricing');
-    Id WorldMarketPricingOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'World_Market_Pricing');
+    static Id WorldMarketPricingOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'World_Market_Pricing');
+    static Id OtherBusinessOpportunityRtId = Utility.getRecordTypeIdByDeveloperName('Opportunity', 'Other_Business');
     Id ProspectAccountRtId = Utility.getRecordTypeIdByDeveloperName('Account', SAP_Utility.Account_ProspectRT);
+    static Id SalesAreaAccountRtId = Utility.getRecordTypeIdByDeveloperName('Account', SAP_Utility.Account_SalesAreaRT);
 
     private static final String FREIGHT_VISIBILITY_HIDDEN = 'ZFHD';
     private static final String SERVICE_FEE_VISIBILITY_HIDDEN = 'ZLSH';
+    private static final String CONTRACT_UPDATE_STATUS = 'Contract Update';
+    private static final String NEW_CONTRACT_STATUS = 'New Contract';
+    
+    private static final String HUNGARIAN_TEXT = 'Az összes  szállításra az Eladó Általános Értékesítési és Szállítási Feltételei vonatkoznak. A Vevő feltételei és egyéb kondícióai  nem fogadhatók el. A jelen Megállapodás és az Általános Értékesítési és Szállítási Feltételek közötti eltérések esetén a jelen Megállapodás feltételei az irányadóak. Ennek igazolására a megállapodást a felek két (2) azonos példányban írják alá, mindegyik fél kap egy (1) példányt. A megállapodás aláírt pdf-példányainak cseréje érvényes megállapodásnak minősül.';
 
     public override void beforeInsert(List<SObject> newObjects) {
         set<id> accountIds = new set<id>();
@@ -214,6 +220,8 @@ public class OpportunityTriggerHandler extends TriggerHandler {
 
         }
 
+        mainProcessBeforeUpdate(new Map<Id, Opportunity>((List<Opportunity>) oldObjects), newObjects);
+
     }
 
     public override void afterUpdate(List<SObject> oldObjects, List<SObject> newObjects) {
@@ -294,7 +302,9 @@ public class OpportunityTriggerHandler extends TriggerHandler {
             update opportunityLineItemsToUpdate;
         }
 
-        MonthlyVolumeService.createMonthlyVolumes(new Map<Id, Opportunity>((List<Opportunity>)newObjects), new Map<Id, Opportunity>((List<Opportunity>)oldObjects));
+        MonthlyVolumeService.createMonthlyVolumes(new Map<Id, Opportunity>((List<Opportunity>) newObjects), new Map<Id, Opportunity>((List<Opportunity>)oldObjects));
+
+        mainProcessAfterUpdate(new Map<Id, Opportunity>((List<Opportunity>) oldObjects), newObjects);
     }
 
     private static void recalculateProductPricing(Map<id, RecalculateXrate> recalculateMap) {
@@ -379,27 +389,66 @@ public class OpportunityTriggerHandler extends TriggerHandler {
     }
 
     private static void mainProcessBeforeInsert(List<Opportunity> opportunities) {
-        if (opportunities == null || opportunities.isEmpty() || oldOpportunitiesMap == null || oldOpportunitiesMap.isEmpty()) return;
+        if (opportunities == null || opportunities.isEmpty()) return;
+
+        Map<ID, Account> parentAccountById = getParentAccountsById(opportunities);
 
         for (Opportunity opportunity : opportunities) {
-            setDefaultVisibility(opportunities);
-            setContractToNew(opportunities);
+            Account parentAccount = parentAccountById.get(opportunity.AccountId);
+
+            setDefaultVisibility(opportunity);
+            setContractToNew(opportunity);
+            updateLegalInfo(opportunity, parentAccount);
+            setPaymentTerms(opportunity, parentAccount);
+            setLegalAccount(opportunity, parentAccount);
+            setLegalTermsStatement(opportunity, parentAccount);
+            updateAmountSum(opportunity);
+            updateOpportunityVolume(opportunity);
         }
     }
 
-    private static void mainProcessAfterInsert(List<Opportunity> opportunities, Map<Id, Opportunity> oldOpportunitiesMap) {
-        if (opportunities == null || opportunities.isEmpty()) return;
-
-    }
-
-    private static void mainProcessBeforeUpdate(List<Opportunity> opportunities) {
-        if (opportunities == null || opportunities.isEmpty()) return;
-
-    }
-
-    private static void mainProcessAfterUpdate(List<Opportunity> opportunities, Map<Id, Opportunity> oldOpportunitiesMap) {
+    private static void mainProcessBeforeUpdate(Map<Id, Opportunity> oldOpportunitiesMap, List<Opportunity> opportunities) {
         if (opportunities == null || opportunities.isEmpty() || oldOpportunitiesMap == null || oldOpportunitiesMap.isEmpty()) return;
 
+        Map<ID, Account> parentAccountById = getParentAccountsById(opportunities);
+        Map<ID, Account> legalContractPartnerById = getParentAccountsById(opportunities);
+
+        for (Opportunity opportunity : opportunities) {
+            Opportunity oldOpportunity = oldOpportunitiesMap.get(opportunity.Id);
+            Account parentAccount = parentAccountById.get(opportunity.AccountId);
+
+            if (opportunity.AccountId != oldOpportunity.AccountId) {
+                updateLegalInfo(opportunity, parentAccount);
+                setPaymentTerms(opportunity, parentAccount);
+            }
+            if (opportunity.AccountId != oldOpportunity.AccountId
+                || opportunity.LegalTemplateLanguage__c != oldOpportunity.LegalTemplateLanguage__c
+            ) {
+                setLegalTermsStatement(opportunity, parentAccount);
+            }
+            if (opportunity.LegalContractPartner__c != oldOpportunity.LegalContractPartner__c) {
+                updatePaymentTerms(opportunity, parentAccountById.get(opportunity.LegalContractPartner__c));
+            }
+            if (opportunity.ContractNumber__c != oldOpportunity.ContractNumber__c) {
+                setToExistingContract(opportunity);
+            }
+            if (opportunity.Tmp_HungarianTexts__c != oldOpportunity.Tmp_HungarianTexts__c) {
+                updateLegalTexts(opportunity);
+            }
+
+            setLegalAccount(opportunity, parentAccount);
+            updateAmountSum(opportunity);
+            updateOpportunityVolume(opportunity);
+        }
+    }
+
+    private static void mainProcessAfterUpdate(Map<Id, Opportunity> oldOpportunitiesMap, List<Opportunity> opportunities) {
+        if (opportunities == null || opportunities.isEmpty() || oldOpportunitiesMap == null || oldOpportunitiesMap.isEmpty()) return;
+
+        Map<Id, OpportunityLineItem> lineItemsForUpdate = getLineItemsForUpdate(opportunities, oldOpportunitiesMap);
+        if (!lineItemsForUpdate.isEmpty()) {
+            update lineItemsForUpdate.values();
+        }
     }
 
     private static Opportunity setDefaultVisibility(Opportunity opportunity) {
@@ -417,11 +466,301 @@ public class OpportunityTriggerHandler extends TriggerHandler {
         if (opportunity == null) return null;
 
         if (opportunity.RecordTypeId == SalesOpportunityRtId) {
-            opportunity.ContractStatus__c = 'New Contract';
+            opportunity.ContractStatus__c = NEW_CONTRACT_STATUS;
             opportunity.ContractTemplateJSON__c = '""';
         }
 
         return opportunity;
+    }
+
+    private static Opportunity updateLegalInfo(Opportunity opportunity, Account parentAccount) {
+        if (opportunity == null || parentAccount == null) return null;
+
+        if (opportunity.RecordTypeId == SalesOpportunityRtId
+             && parentAccount.SalesArea__r.SalesArea_LegalInformation__c != null
+        ) {
+            opportunity.LegalTextsLocal__c = parentAccount.SalesArea__r.SalesArea_LegalInformation__r.LegalText_local__c;
+            opportunity.LegalTexts__c = parentAccount.SalesArea__r.SalesArea_LegalInformation__r.LegalTexts__c;
+        }
+
+        return opportunity;
+    }
+
+    private static Opportunity setPaymentTerms(Opportunity opportunity, Account parentAccount) {
+        if (opportunity == null || parentAccount == null) return null;
+
+        if (opportunity.RecordTypeId == SalesOpportunityRtId 
+            && opportunity.Terms_payment__c == null
+        ) {
+            opportunity.Terms_payment__c = parentAccount.Terms_payment__c;
+        }
+
+        return opportunity;
+    }
+
+    private static Opportunity setLegalAccount(Opportunity opportunity, Account parentAccount) {
+        if (opportunity == null || parentAccount == null) return null;
+
+        if (opportunity.RecordTypeId == SalesOpportunityRtId 
+            && opportunity.AccountId != null 
+            && opportunity.LegalContractPartner__c == null
+            && parentAccount.RecordTypeId == SalesAreaAccountRtId
+            && parentAccount.GeneralDataAccountGroup__c == 'SoldTo'
+        ) {
+            opportunity.LegalContractPartner__c = opportunity.AccountId;
+        }
+
+        return opportunity;
+    }
+
+    private static Opportunity setLegalTermsStatement(Opportunity opportunity, Account parentAccount) {
+        if (opportunity == null || parentAccount == null) return null;
+        
+        Boolean isDeliveryInfoNull = opportunity.LegalTemplateLanguage__c == 'EN'
+            ? parentAccount.SalesArea__r.SalesArea_LegalInformation__r.Delivery_Info__c != null
+            : parentAccount.SalesArea__r.SalesArea_LegalInformation__r.Delivery_Info_local__c != null;
+
+        if (opportunity.RecordTypeId == SalesOpportunityRtId 
+            && parentAccount.RecordTypeId == SalesAreaAccountRtId
+            && parentAccount.SalesArea__r.SalesArea_LegalInformation__c != null
+            && isDeliveryInfoNull
+        ) {
+            opportunity.LegalTermsStatement__c = opportunity.LegalTemplateLanguage__c == 'EN'
+                ? parentAccount.SalesArea__r.SalesArea_LegalInformation__r.FootNote__c
+                : parentAccount.SalesArea__r.SalesArea_LegalInformation__r.FootNote_local__c;
+        }
+
+        return opportunity;
+    }
+
+    private static Opportunity updatePaymentTerms(Opportunity opportunity, Account legalContractPartner) {
+        if (opportunity == null || legalContractPartner == null) return null;
+        
+        if (opportunity.LegalContractPartner__c != null) {
+            opportunity.Terms_payment__c = legalContractPartner.Terms_payment__c;
+        }
+
+        return opportunity;
+    }
+
+    private static Opportunity setToExistingContract(Opportunity opportunity) {
+        if (opportunity == null) return null;
+
+        if (opportunity.RecordTypeId == SalesOpportunityRtId 
+            && opportunity.ContractNumber__c != null
+        ) {
+            opportunity.ContractStatus__c = CONTRACT_UPDATE_STATUS;
+        }
+
+        return opportunity;
+    }
+
+    private static Opportunity updateAmountSum(Opportunity opportunity) {
+        if (opportunity == null) return null;
+
+        if (opportunity.RecordTypeId == OtherBusinessOpportunityRtId) {
+            opportunity.Amount = opportunity.EstimatedAmout__c + opportunity.EstimatedAmount2__c;
+        }
+
+        return opportunity;
+    }
+
+    private static Opportunity updateOpportunityVolume(Opportunity opportunity) {
+        if (opportunity == null) return null;
+
+        if (opportunity.RecordTypeId == SalesOpportunityRtId
+            || opportunity.RecordTypeId == WorldMarketPricingOpportunityRtId
+        ) {
+            opportunity.OpportunityVolume__c = opportunity.VolumeTons__c;
+        } else if (opportunity.RecordTypeId == OtherBusinessOpportunityRtId) {
+            opportunity.OpportunityVolume__c = 
+                opportunity.EstimatedAmountTons2__c == null
+                ? opportunity.EstimatedAmountTons__c
+                : opportunity.EstimatedAmountTons__c == null
+                    ? opportunity.EstimatedAmountTons2__c
+                    :  opportunity.EstimatedAmountTons__c + opportunity.EstimatedAmountTons2__c;
+        }
+
+        return opportunity;
+    }
+
+    //TODO Move the HUNGARIAN_TEXT constant to Custom Label
+    private static Opportunity updateLegalTexts(Opportunity opportunity) {
+        if (opportunity == null) return null;
+
+        if (opportunity.Tmp_HungarianTexts__c == true) {
+            opportunity.LegalTextsLocal__c = HUNGARIAN_TEXT;
+        }
+
+        return opportunity;
+    }
+
+    private static Map<Id, OpportunityLineItem> getLineItemsForUpdate(List<Opportunity> opportunities, Map<Id, Opportunity> oldOpportunitiesMap) {
+        Map<Id, OpportunityLineItem> lineItemsForUpdate = new Map<Id, OpportunityLineItem>();
+
+        if (opportunities == null || opportunities.isEmpty() 
+            || oldOpportunitiesMap == null || oldOpportunitiesMap.isEmpty()
+        ) {
+            return lineItemsForUpdate;
+        }
+
+        Map<Id, Opportunity> changedOpportunityById = getChangedOpportunitiesForLineItemUpdate(opportunities, oldOpportunitiesMap);
+        List<OpportunityLineItem> lineItems = getLineItems(changedOpportunityById.keySet());
+
+        for (OpportunityLineItem lineItem : lineItems) {
+            Opportunity opportunity = changedOpportunityById.get(lineItem.OpportunityId);
+            Opportunity oldopportunity = oldOpportunitiesMap.get(opportunity.Id);
+
+            if (isHedgeReferenceChanged(opportunity, oldOpportunity)
+                && lineItem.HedgeReference__c == null
+            ) {
+                addChanges(
+                    lineItemsForUpdate, 
+                    new OpportunityLineItem(
+                        Id = lineItem.Id,
+                        HedgeReference__c = opportunity.HedgeReference__c
+                    )
+                );
+            }
+
+            if (isFreightVisibilityChanged(opportunity, oldOpportunity)) {
+                addChanges(
+                    lineItemsForUpdate, 
+                    new OpportunityLineItem(
+                        Id = lineItem.Id,
+                        Freight_Visibility__c = opportunity.FreightVisibility__c
+                    )
+                );
+            }
+
+            if (isServiceFeeVisibilityChanged(opportunity, oldOpportunity)) {
+                addChanges(
+                    lineItemsForUpdate, 
+                    new OpportunityLineItem(
+                        Id = lineItem.Id,
+                        ServiceFee_Visiblity__c = opportunity.ServiceFeeVisibility__c
+                    )
+                );
+            }
+
+            if (isServiceFeeVisibilityChanged(opportunity, oldOpportunity)) {
+                addChanges(
+                    lineItemsForUpdate, 
+                    new OpportunityLineItem(
+                        //TODO
+                        Id = lineItem.Id // ,
+                        // SustainabilityPremium_Visiblity__c = opportunity.SustainabilityPremium_Visiblity__c
+                    )
+                );
+            }
+        }
+
+        update lineItemsForUpdate.values();
+
+        return lineItemsForUpdate;
+    }
+
+    private static Map<Id, Opportunity> getChangedOpportunitiesForLineItemUpdate(
+        List<Opportunity> opportunities, 
+        Map<Id, Opportunity> oldOpportunitiesMap
+    ) {
+        Map<Id, Opportunity> changedOpportunityById = new Map<Id, Opportunity>();
+
+        if (opportunities == null || opportunities.isEmpty() 
+            || oldOpportunitiesMap == null || oldOpportunitiesMap.isEmpty()
+        ) {
+            return changedOpportunityById;
+        }
+
+        for (Opportunity opportunity : opportunities) {
+            Opportunity oldOpportunity = oldOpportunitiesMap.get(opportunity.Id);
+
+            if (isHedgeReferenceChanged(opportunity, oldOpportunity)
+                || isFreightVisibilityChanged(opportunity, oldOpportunity)
+                || isServiceFeeVisibilityChanged(opportunity, oldOpportunity)
+                || isSustainabilityPremiumVisiblityChanged(opportunity, oldOpportunity)
+            ) {
+                changedOpportunityById.put(opportunity.Id, opportunity);
+            }
+        }
+
+        return changedOpportunityById;
+    }
+
+    private static Boolean isHedgeReferenceChanged(Opportunity opportunity, Opportunity oldOpportunity) {
+        if (opportunity == null || oldOpportunity == null) return false;
+
+        return opportunity.HedgeReference__c != oldOpportunity.HedgeReference__c 
+            && opportunity.RecordTypeId == SalesOpportunityRtId;
+    }
+
+    private static Boolean isFreightVisibilityChanged(Opportunity opportunity, Opportunity oldOpportunity) {
+        if (opportunity == null || oldOpportunity == null) return false;
+
+        return opportunity.FreightVisibility__c != oldOpportunity.FreightVisibility__c;
+    }
+
+    private static Boolean isServiceFeeVisibilityChanged(Opportunity opportunity, Opportunity oldOpportunity) {
+        if (opportunity == null || oldOpportunity == null) return false;
+
+        return opportunity.ServiceFeeVisibility__c != oldOpportunity.ServiceFeeVisibility__c;
+    }
+
+    private static Boolean isSustainabilityPremiumVisiblityChanged(Opportunity opportunity, Opportunity oldOpportunity) {
+        if (opportunity == null || oldOpportunity == null) return false;
+
+        //TODO
+        return false; //opportunity.SustainabilityPremium_Visiblity__c != oldOpportunity.SustainabilityPremium_Visiblity__c;
+    }
+
+    private static Map<Id, SObject> addChanges(Map<Id, SObject> records, SObject record) {
+        if (records == null || record == null) return new Map<Id, SObject>();
+
+        if (!records.containsKey(record.Id)) {
+            records.put(record.Id, record);
+            return records;
+        }
+
+        SObject existRecord = records.get(record.Id);
+
+        for (String fieldName : record.getPopulatedFieldsAsMap().keySet()) {
+            existRecord.put(fieldName, record.get(fieldName));
+        }
+
+        return records;
+    }
+
+    private static Map<Id, Account> getParentAccountsById(List<Opportunity> opportunities) {
+        if (opportunities == null || opportunities.isEmpty()) {
+            return new Map<Id, Account>();
+        }
+
+        Set<Id> accountIds = Utility.getIds(opportunities, 'AccountId');
+        accountIds.addAll(Utility.getIds(opportunities, 'LegalContractPartner__c'));
+
+        return new Map<Id, Account>([
+            SELECT Id, Name, RecordTypeId, Terms_payment__c, GeneralDataAccountGroup__c,
+                SalesArea__r.SalesArea_LegalInformation__r.LegalTexts__c, 
+                SalesArea__r.SalesArea_LegalInformation__r.LegalText_local__c,
+                SalesArea__r.SalesArea_LegalInformation__r.Delivery_Info__c, 
+                SalesArea__r.SalesArea_LegalInformation__r.Delivery_Info_local__c,
+                SalesArea__r.SalesArea_LegalInformation__r.FootNote__c, 
+                SalesArea__r.SalesArea_LegalInformation__r.FootNote_local__c
+            FROM Account
+            WHERE Id IN :accountIds
+        ]);
+    }
+
+    private static List<OpportunityLineItem> getLineItems(Set<Id> opportunityIds) {
+        if (opportunityIds == null || opportunityIds.isEmpty()) {
+            return new List<OpportunityLineItem>();
+        }
+
+        return [
+            SELECT Id, OpportunityId
+            FROM OpportunityLineItem
+            WHERE OpportunityId IN :opportunityIds
+        ];
     }
 
     public class RecalculateXrate {
@@ -430,5 +769,4 @@ public class OpportunityTriggerHandler extends TriggerHandler {
         public Decimal newRate;
         public Decimal oldRate;
     }
-
 }
