@@ -5,8 +5,9 @@
  * @last modified on  : 01-14-2021
  * @last modified by  : Roman Hnativ
  * Modifications Log 
- * Ver   Date         Author         Modification
- * 1.0   01-14-2021   Roman Hnativ   Initial Version
+ * Ver   Date         Author               Modification
+ * 1.0   01-14-2021   Roman Hnativ         Initial Version
+ * 2.0   10-16-2025   Andrei Pivavarchyk   getIds method added
 **/
 public class Utility {
     public static Map<String, Map<String, RecordType> > RecordTypeMap = new Map<String, Map<String, RecordType> >();
@@ -67,5 +68,22 @@ public class Utility {
         } else {
             return value.setScale(2);
         }
+    }
+
+    public  static Set<Id> getIds(List<SObject> records, String fieldName) {
+        Set<Id> ids = new Set<Id>();
+
+        if (records == null || records.isEmpty() || String.isBlank(fieldName)) return ids;
+
+        for (SObject record : records) {
+            Object idObj = record.get(fieldName);
+            if (idObj == null || !(idObj instanceof Id)) {
+                continue;
+            }
+
+            ids.add((Id) idObj);
+        }
+
+        return ids;
     }
 }

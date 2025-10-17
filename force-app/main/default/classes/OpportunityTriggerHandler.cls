@@ -24,6 +24,7 @@ public class OpportunityTriggerHandler extends TriggerHandler {
     private static final String CONTRACT_UPDATE_STATUS = 'Contract Update';
     private static final String NEW_CONTRACT_STATUS = 'New Contract';
     
+    //TODO Move the HUNGARIAN_TEXT constant to Custom Label
     private static final String HUNGARIAN_TEXT = 'Az összes  szállításra az Eladó Általános Értékesítési és Szállítási Feltételei vonatkoznak. A Vevő feltételei és egyéb kondícióai  nem fogadhatók el. A jelen Megállapodás és az Általános Értékesítési és Szállítási Feltételek közötti eltérések esetén a jelen Megállapodás feltételei az irányadóak. Ennek igazolására a megállapodást a felek két (2) azonos példányban írják alá, mindegyik fél kap egy (1) példányt. A megállapodás aláírt pdf-példányainak cseréje érvényes megállapodásnak minősül.';
 
     public override void beforeInsert(List<SObject> newObjects) {
@@ -411,7 +412,6 @@ public class OpportunityTriggerHandler extends TriggerHandler {
         if (opportunities == null || opportunities.isEmpty() || oldOpportunitiesMap == null || oldOpportunitiesMap.isEmpty()) return;
 
         Map<ID, Account> parentAccountById = getParentAccountsById(opportunities);
-        Map<ID, Account> legalContractPartnerById = getParentAccountsById(opportunities);
 
         for (Opportunity opportunity : opportunities) {
             Opportunity oldOpportunity = oldOpportunitiesMap.get(opportunity.Id);
@@ -446,6 +446,7 @@ public class OpportunityTriggerHandler extends TriggerHandler {
         if (opportunities == null || opportunities.isEmpty() || oldOpportunitiesMap == null || oldOpportunitiesMap.isEmpty()) return;
 
         Map<Id, OpportunityLineItem> lineItemsForUpdate = getLineItemsForUpdate(opportunities, oldOpportunitiesMap);
+
         if (!lineItemsForUpdate.isEmpty()) {
             update lineItemsForUpdate.values();
         }
@@ -516,14 +517,14 @@ public class OpportunityTriggerHandler extends TriggerHandler {
     private static Opportunity setLegalTermsStatement(Opportunity opportunity, Account parentAccount) {
         if (opportunity == null || parentAccount == null) return null;
         
-        Boolean isDeliveryInfoNull = opportunity.LegalTemplateLanguage__c == 'EN'
+        Boolean isDeliveryInfoNotNull = opportunity.LegalTemplateLanguage__c == 'EN'
             ? parentAccount.SalesArea__r.SalesArea_LegalInformation__r.Delivery_Info__c != null
             : parentAccount.SalesArea__r.SalesArea_LegalInformation__r.Delivery_Info_local__c != null;
 
         if (opportunity.RecordTypeId == SalesOpportunityRtId 
             && parentAccount.RecordTypeId == SalesAreaAccountRtId
             && parentAccount.SalesArea__r.SalesArea_LegalInformation__c != null
-            && isDeliveryInfoNull
+            && isDeliveryInfoNotNull
         ) {
             opportunity.LegalTermsStatement__c = opportunity.LegalTemplateLanguage__c == 'EN'
                 ? parentAccount.SalesArea__r.SalesArea_LegalInformation__r.FootNote__c
@@ -609,7 +610,7 @@ public class OpportunityTriggerHandler extends TriggerHandler {
 
         for (OpportunityLineItem lineItem : lineItems) {
             Opportunity opportunity = changedOpportunityById.get(lineItem.OpportunityId);
-            Opportunity oldopportunity = oldOpportunitiesMap.get(opportunity.Id);
+            Opportunity oldOpportunity = oldOpportunitiesMap.get(opportunity.Id);
 
             if (isHedgeReferenceChanged(opportunity, oldOpportunity)
                 && lineItem.HedgeReference__c == null
@@ -643,19 +644,18 @@ public class OpportunityTriggerHandler extends TriggerHandler {
                 );
             }
 
-            if (isServiceFeeVisibilityChanged(opportunity, oldOpportunity)) {
+            if (isSustainabilityPremiumVisiblityChanged(opportunity, oldOpportunity)) {
                 addChanges(
                     lineItemsForUpdate, 
                     new OpportunityLineItem(
                         //TODO
                         Id = lineItem.Id // ,
+                        // SustainabilityPremium_Visiblity__c doesn't exist on dev
                         // SustainabilityPremium_Visiblity__c = opportunity.SustainabilityPremium_Visiblity__c
                     )
                 );
             }
         }
-
-        update lineItemsForUpdate.values();
 
         return lineItemsForUpdate;
     }
@@ -709,7 +709,7 @@ public class OpportunityTriggerHandler extends TriggerHandler {
     private static Boolean isSustainabilityPremiumVisiblityChanged(Opportunity opportunity, Opportunity oldOpportunity) {
         if (opportunity == null || oldOpportunity == null) return false;
 
-        //TODO
+        //TODO SustainabilityPremium_Visiblity__c doesn't exist on dev
         return false; //opportunity.SustainabilityPremium_Visiblity__c != oldOpportunity.SustainabilityPremium_Visiblity__c;
     }
 
