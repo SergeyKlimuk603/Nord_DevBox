@@ -1,8 +1,28 @@
+/****************************************************************************************************
+* Class CaseTriggerHandler
+*
+*   Create By   :  Andrei Pivavarchyk (mindsquare GmbH)
+*   Create Date :  10.09.2025
+*   Description  : Trigger Handler for the Case
+*
+*   Modification Log:
+*   -------------------------------------------------------------------------------------------------
+*   * Developer                             Date           Description
+*   * -----------------------------------------------------------------------------------------------
+*   * Andrei Pivavarchyk (mindsquare GmbH)  10.09.2025     Init version.
+****************************************************************************************************/
+
 public class CaseTriggerHandler extends TriggerHandler {
     private static final String CASE_OBJECT_NAME = 'Case';
     private static final String CASE_COMPLAINT_RECORD_TYPE = 'Complaint';
     private static final String CASE_STATUS_CLOSED = 'Closed';
     private static final Id COMPLAINT_RECORD_TYPE_ID = Utility.getRecordTypeIdByDeveloperName(CASE_OBJECT_NAME, CASE_COMPLAINT_RECORD_TYPE);
+    private static final String UPDATE_CURRENCY_CODE = 'UPDATE_CURRENCY_CODE';
+    private static final String CREATE_TASK = 'CREATE_TASK';
+    private static Map<String, Set<Id>> processedCaseIdsByProcessName = new Map<String, Set<Id>>{
+            UPDATE_CURRENCY_CODE => new Set<Id>(),
+            CREATE_TASK => new Set<Id>()
+    };
 
     public override void beforeInsert(List<SObject> newCases) {
         mainProcessBefore(null, newCases);
@@ -48,17 +68,20 @@ public class CaseTriggerHandler extends TriggerHandler {
         List<Case> complaintCasesToUpdate = new List<Case>();
 
         for (Case newCase : newCases) {
-            if (newCase.RecordTypeId == COMPLAINT_RECORD_TYPE_ID) {
+            if (!processedCaseIdsByProcessName.get(UPDATE_CURRENCY_CODE).contains(newCase.Id)
+                    && newCase.RecordTypeId == COMPLAINT_RECORD_TYPE_ID) {
                 complaintCasesToUpdate.add(
                         new Case(Id = newCase.Id, CurrencyIsoCode = newCase.CurrencyIsoCode)
                 );
+                processedCaseIdsByProcessName.get(UPDATE_CURRENCY_CODE).add(newCase.Id);
             }
 
             Case oldCase = oldCasesMap?.get(newCase.Id);
-            if(oldCase!=null){
+            if(oldCase!=null && !processedCaseIdsByProcessName.get(CREATE_TASK).contains(newCase.Id) ){
                 Task newTask = createTaskWhenDueDateIsSet(newCase, oldCase, accountsById.get(newCase.AccountId));
                 if (newTask != null) {
                     tasksToInsert.add(newTask);
+                    processedCaseIdsByProcessName.get(CREATE_TASK).add(newCase.Id);
                 }
             }
         }
